@@ -47,5 +47,5 @@ torchrun \
     --logging_steps 1 \
     --gradient_checkpointing True \
     --dataloader_num_workers 4 \
-    --report_to tensorboard \
+    --report_to wandb tensorboard \
     --run_name ${EXP_NAME}
