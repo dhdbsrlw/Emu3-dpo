@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 
+# tmux session 3 에서 학습
+#  Run data is saved locally in /tmp/wandb/run-20241226_083904-i69bqrc3
+
 from dataclasses import dataclass, field
 import os
 import os.path as osp
@@ -18,9 +21,11 @@ from peft import LoraConfig
 from emu3.mllm import Emu3Config, Emu3Tokenizer, Emu3ForCausalLM
 from emu3.train.datasets_HumanEdit import Emu3FeatureDataset
 
-# conda activate emu3
+
+# conda activate emu3_dpo
 # cd /home/yjoh/project/Emu3-dpo
-# sh scripts/t2i_sft_offload.sh
+# sh /home/yjoh/project/Emu3-dpo/scripts/t2i_sft_offload.sh
+
 
 @dataclass
 class ModelArguments:
@@ -65,10 +70,19 @@ def train():
     # parser = tf.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments, LoraArguments))
     # model_args, data_args, training_args, lora_args = parser.parse_args_into_dataclasses()
 
+    os.environ["WANDB_DIR"] = osp.join(training_args.output_dir, "wandb")
+    
+
     model_config = Emu3Config.from_pretrained(model_args.model_name_or_path)
     update_configs(model_config, training_args, ["image_area", "max_position_embeddings"])
     if training_args.min_learning_rate is not None:
         training_args.lr_scheduler_kwargs["min_lr"] = training_args.min_learning_rate
+
+    if training_args.logging_dir is None:
+        training_args.logging_dir = os.path.join(training_args.output_dir, "./logs")
+    print(f"\n# Logging to: {training_args.report_to}")
+    print(f"\n# Logging Dir: {training_args.logging_dir}\n")
+    
 
 
     # LoRA 추가
@@ -122,6 +136,7 @@ def train():
         train_dataset=train_dataset,
     )
 
+    print(f"\n# Logging to: {training_args.report_to}")
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
         trainer.train(resume_from_checkpoint=True)
