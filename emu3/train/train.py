@@ -9,9 +9,18 @@ from typing import Optional, List
 import transformers as tf
 import torch
 
-from emu3.mllm import Emu3Config, Emu3Tokenizer, Emu3ForCausalLM
-from emu3.train.datasets import Emu3FeatureDataset
+# add
+import pyrootutils
+pyrootutils.setup_root(__file__, indicator=".project-root", pythonpath=True, cwd=True)
+from peft import get_peft_model, LoraConfig, TaskType
+from peft import LoraConfig
 
+from emu3.mllm import Emu3Config, Emu3Tokenizer, Emu3ForCausalLM
+from emu3.train.datasets_HumanEdit import Emu3FeatureDataset
+
+# conda activate emu3
+# cd /home/yjoh/project/Emu3-dpo
+# sh scripts/t2i_sft_offload.sh
 
 @dataclass
 class ModelArguments:
@@ -38,7 +47,6 @@ class TrainingArguments(tf.TrainingArguments):
     image_area: Optional[int] = field(default=None)
     max_position_embeddings: Optional[int] = field(default=None)
 
-
 def update_configs(model_config, args, fields):
     cross_update = lambda a, b, field_name: (
         setattr(b, field_name, getattr(a, field_name))
@@ -51,15 +59,26 @@ def update_configs(model_config, args, fields):
 
 
 def train():
+
     parser = tf.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    # parser = tf.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments, LoraArguments))
+    # model_args, data_args, training_args, lora_args = parser.parse_args_into_dataclasses()
 
     model_config = Emu3Config.from_pretrained(model_args.model_name_or_path)
     update_configs(model_config, training_args, ["image_area", "max_position_embeddings"])
     if training_args.min_learning_rate is not None:
         training_args.lr_scheduler_kwargs["min_lr"] = training_args.min_learning_rate
 
-    os.environ["WANDB_DIR"] = osp.join(training_args.output_dir, "wandb")
+
+    # LoRA 추가
+    lora_config = LoraConfig(
+        r=8,  # Rank of the LoRA matrix
+        lora_alpha=16,  # Scaling factor for LoRA
+        target_modules=["q_proj", "v_proj"],  # Apply LoRA to specific model modules
+        lora_dropout=0.1,  # Dropout rate for LoRA
+        task_type=TaskType.CAUSAL_LM  # Task type: Causal Language Modeling
+    )
 
     model = Emu3ForCausalLM.from_pretrained(
         model_args.model_name_or_path,
@@ -68,12 +87,32 @@ def train():
         torch_dtype=torch.bfloat16 if training_args.bf16 else None,
     )
 
+
+    # Apply LoRA
+    # (수정) /root/anaconda3/lib/python3.12/site-packages/deepspeed/runtime/zero/stage3.py
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
+    else:
+        def make_inputs_require_grad(module, input, output):
+            output.requires_grad_(True)
+
+        model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()  # Optional: View trainable parameters
+    # Ensure trainable parameters require gradients
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Trainable parameter: {name}")
+
+
     tokenizer = Emu3Tokenizer.from_pretrained(
         model_args.model_name_or_path,
         model_max_length=training_args.max_position_embeddings,
         padding_side="right",
         use_fast=False,
     )
+
 
     train_dataset = Emu3FeatureDataset(data_args, tokenizer=tokenizer)
 
@@ -82,12 +121,14 @@ def train():
         args=training_args,
         train_dataset=train_dataset,
     )
-    
+
+
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
         trainer.train(resume_from_checkpoint=True)
     else:
         trainer.train()
     trainer.save_state()
+    model.save_pretrained(training_args.output_dir) # add for LoRA adapter
 
     torch.cuda.synchronize()
     trainer.save_model(training_args.output_dir)
