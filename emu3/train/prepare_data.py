@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 # 15000MB 소요
 
-# CUDA_VISIBLE_DEVICES=1 python /home/yjoh/project/Emu3-dpo/emu3/train/prepare_data.py --model_path BAAI/Emu3-VisionTokenizer --output_path /nas2/preference/emu3_tokenized/human_edit_val
+# CUDA_VISIBLE_DEVICES=1 python /home/yjoh/project/Emu3-dpo/emu3/train/prepare_data.py --data_path /nas/backup/data/preference_data/magicbrush_dev_data.json --image_path /nas/backup/data/preference_data/magicbrush_dev_images --output_path /nas2/preference/emu3_tokenized/magicbrush_dev
 
 """
  {
@@ -38,11 +38,10 @@ from tqdm import tqdm
 
 def prepare_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_path', type=str, help='vision tokenizer path')
-    parser.add_argument('--data_path', type=str, help='data path', default='/nas2/preference/HumanEdit/data/processed/split_ver/HumanEdit_val.json')
-    parser.add_argument('--image_path', type=str, help='image path', default='/nas2/preference/HumanEdit/images') # 추가
-    parser.add_argument('--cache_dir', type=str, default='/nas2/checkpoints/hf_cache_yj') # 추가 (고정)
-    parser.add_argument('--output_path', type=str, help='tokenized data save path')
+    parser.add_argument('--model_path', type=str, help='vision tokenizer path', default='BAAI/Emu3-VisionTokenizer')
+    parser.add_argument('--data_path', type=str, help='data path', default='/data/preference_data/magicbrush_train_data.json')
+    parser.add_argument('--image_path', type=str, help='image path', default='/data/preference_data/magicbrush_train_images')
+    parser.add_argument('--output_path', type=str, help='tokenized data save path', default='/nas2/preference/emu3_tokenized/magicbrush_train')
     parser.add_argument('--image_area', type=int, default=720 * 720)
 
     args = parser.parse_args()
@@ -84,20 +83,26 @@ def main():
         # name = inp["name"]
         # prompt = inp["text"]
 
-        name = inp["image_id"]
-        edit_type = inp["editing_type"]
-        edit_instruction = inp["editing_instruction"]
-        output_description = inp["output_description"]
-        input_caption = inp["input_caption_by_llama"]
-        output_caption = inp["output_caption_by_llama"]
-
+        # HumanEdit
+        # name = inp["image_id"]
+        # edit_type = inp["editing_type"]
+        # edit_instruction = inp["editing_instruction"]
+        # output_description = inp["output_description"]
+        # input_caption = inp["input_caption_by_llama"]
+        # output_caption = inp["output_caption_by_llama"]
         # Image
         # "input_img": "BEwrVP6o0yQ_input.jpg",
         # "mask_img": "BEwrVP6o0yQ_mask.jpg",
         # "output_img": "BEwrVP6o0yQ_output.jpg"
 
-        input_image_path = os.path.join(args.image_path, name, inp["input_img"])
-        output_image_path = os.path.join(args.image_path, name, inp["output_img"])
+        # MagicBrush
+        name = inp["input"].split("-")[0]
+        # print("name: ", name)
+        edit_instruction = inp["instruction"]
+
+        input_image_path = os.path.join(args.image_path, name, inp["input"])
+        output_image_path = os.path.join(args.image_path, name, inp["output"])
+        mask_image_path = os.path.join(args.image_path, name, inp["mask"])
         
 
         # input
@@ -123,16 +128,37 @@ def main():
 
         output_token_ids = output_token_ids.squeeze(0).cpu().numpy()
 
-        
+
+        # mask
+        mask_image = Image.open(mask_image_path).convert("RGB")
+        mask_image = smart_resize(mask_image, args.image_area)
+
+        mask_image = image_processor(mask_image, return_tensors="pt")["pixel_values"]
+        with torch.no_grad():
+            mask_image = mask_image.cuda()
+            mask_token_ids = image_tokenizer.encode(mask_image)
+
+        mask_token_ids = mask_token_ids.squeeze(0).cpu().numpy()
+
+        # HumanEdit
+        # data = {
+        #     "name": name,
+        #     "edit_type": edit_type,
+        #     "edit_instruction": edit_instruction,
+        #     "output_description": output_description,
+        #     "input_caption": input_caption,
+        #     "output_caption": output_caption,
+        #     "input_images": input_token_ids,
+        #     "output_images": output_token_ids,
+        # }
+
+        # MagicBrush
         data = {
             "name": name,
-            "edit_type": edit_type,
             "edit_instruction": edit_instruction,
-            "output_description": output_description,
-            "input_caption": input_caption,
-            "output_caption": output_caption,
             "input_images": input_token_ids,
             "output_images": output_token_ids,
+            "mask_images": mask_token_ids,
         }
 
         torch.save(data, f"{args.output_path}/feature/{name}.pth")

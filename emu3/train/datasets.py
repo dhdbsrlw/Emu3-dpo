@@ -51,6 +51,8 @@ class Emu3FeatureDataset(Dataset):
         labels = sample["input_ids"]
         if self.args.apply_loss_on_only_vision:
             labels = torch.where(torch.logical_and(labels >= self.bov, labels <= self.eov), labels, self.args.ignore_index)
+            print("debug 1")
+            print("Before labels: ", labels)
 
         sample["labels"] = labels
         for k, v in sample.items():
