@@ -61,16 +61,44 @@ class Emu3FeatureDataset(Dataset):
 
             labels = sample["input_ids"]
             if self.args.apply_loss_on_only_vision:
+                # # v1
                 labels = torch.where(torch.logical_and(labels >= self.bov, labels <= self.eov), labels, self.args.ignore_index)
+        
+                # (주의: 위치인덱스)
+                image_token_indices = torch.nonzero(labels != self.args.ignore_index, as_tuple=True)[1] # tensor([    8,     9,    10,  ..., 16399, 16400, 16401])
+                # loss_start = (image_token_indices.tolist())[-1] - 8100 + 1
+                # before_loss = loss_start - 1
+        
+                loss_start = (image_token_indices.tolist())[-1] - 8100
+                labels[:, :loss_start] = self.args.ignore_index
+                # print("# labels: ", labels.shape) # labels:  torch.Size([1, 16450])
+
+                # v2
+                # # Compute condition for vision tokens
+                # condition = torch.logical_and(labels >= self.bov, labels <= self.eov)
+                
+                # # Find token indices for the first image
+                # first_image_tokens = self.tokenizer(input_image_prompt, add_special_tokens=False)["input_ids"]
+                # first_image_start = len(self.tokenizer(self.tokenizer.bos_token, add_special_tokens=False)["input_ids"])
+                # first_image_end = first_image_start + len(first_image_tokens)
+                
+                # # Set tokens corresponding to the first image to ignore_index (-100)
+                # labels[:, first_image_start:first_image_end] = self.args.ignore_index
+                
+                # # Apply the condition-based modification to the remaining labels
+                # labels = torch.where(condition, labels, self.args.ignore_index)
+                
+                # (중요) DEBUG
+                # Debugging: Extract indices of true labels after modification
+                # true_label_indices = torch.nonzero(labels != self.args.ignore_index, as_tuple=True)
+                # print("Indices of true labels (after excluding first image):", true_label_indices[1])
+                # print(len(true_label_indices[1])) # 16200 > 8100
+
 
             # TODO: check len(labels)
             sample["labels"] = labels
             for k, v in sample.items():
                 sample[k] = v.squeeze(0)
-
-            # print("# sample: ", sample['input_ids'].shape)
-            # print("# labels: ", labels)
-            # print(len(labels[0]))
 
             return sample
 
