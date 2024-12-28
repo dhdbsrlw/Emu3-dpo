@@ -107,7 +107,6 @@ class Emu3FeatureDataset(Dataset):
             return self.__getitem__(index+1)
 
         
-
     def format_image_prompt(self, image_tokens):
         h, w = image_tokens.shape
         imgstr = self.to_imgstr(image_tokens)

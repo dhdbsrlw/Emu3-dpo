@@ -1,0 +1,94 @@
+# ====  (1) base  ====
+result_path: /backup/eval/results/1106_spin_magicbrush_hparm
+exp_name: 
+save_dir: 
+
+method: custom # official_seed (official weight) / custom
+train_type: sft # pretrain / sft
+train_size: 8b
+visual_tokenizer_type: seed # seed / nsvq
+
+eval: 
+resume: 
+finetune:
+
+device: cuda
+world_size: 1
+
+# ====  (2) model/tokenizer  ====
+tokenizer_path: /nas/backup/checkpoints/llama2/Llama-2-7b-chat-hf # /ssd0/checkpoints/llama2/Llama-2-7b-chat-hf
+model_path:
+  8b:
+    pretrain: /nas/backup/checkpoints/llama2/Llama-2-7b-chat-hf
+    sft: /home/ubuntu/MAGVLT2/MultiModalLLM/pretrained/seed_llama_8b_sft
+    
+  14b:
+    pretrain: None
+    sft: None
+
+model_ckpt_path: /data/checkpoints/t2i_dpo/spin/seed_llama_hf/iter2-ckpt
+
+transform_cfg_path: /home/ubuntu/MAGVLT2/MultiModalLLM/configs/transform/clip_transform.yaml
+
+
+# ====  (3) visual tokenizer  ====
+visual_tokenizer:
+  seed:
+    cfg_path: /home/ubuntu/MAGVLT2/MultiModalLLM/configs/tokenizer/seed_llama_tokenizer_hf.yaml
+    ckpt_path: None
+    vit_precision: fp16
+    diffusion_precision: fp16
+    load_diffusion: True
+
+
+# ====  (4) visual/text token vocab  ====
+vocab:
+  image_token_s: 40192       
+  image_token_e: 40193     
+  image_token_length: 32
+
+  text_token_s: 1           # bos token
+  text_token_e: 2           # eos token
+  text_token_p: 0           # pad token
+
+  image_vocab_size: 8192
+  text_vocab_size: 32000    # 32000 (original LLaMA)
+  total_vocab_size: 40194   # 32000 + 2 + 8192 = 40194
+
+
+# ====  (5) lora hyparams  ====
+lora:
+  r: 64
+  lora_alpha: 128
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"]
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  modules_to_save:        
+
+
+# ====  (6) evaluatioin task info ====
+experiment:
+  task_type: magicbrush
+  seed: 42
+  precision: "bf16"
+  epoch: 1
+  num_workers: 1
+
+task:
+  
+  batch_size: 1
+
+  img_path: /data/magvlt2/data/mllm_benchmark/MagicBrush/test/images
+  inst_path: /data/magvlt2/data/mllm_benchmark/MagicBrush/test/edit_turns.json
+  caption_path: /data/magvlt2/data/mllm_benchmark/MagicBrush/test/local_descriptions.json
+
+  temperature: 0.8 # 0.0
+  #top_p:  
+  num_beams: 5 # 4
+  max_new_tokens: 120
+  #do_sample:  
+
+  metric:
+    - l1
+    - clip-i

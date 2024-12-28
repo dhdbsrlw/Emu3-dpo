@@ -11,7 +11,8 @@ pip uninstall -y deepspeed && pip install deepspeed==0.15.4
 - [X] Clone repository.
 - [X] Prepare data with HumanEdit dataset. 
 - [X] Train official code (SFT) with HumanEdit dataset.
-- [ ] Eval SFT Model for Edit Val dataset (L1, CLIP-T)
+- [ ] Eval SFT Model for MagicBrush (Edit) train/test dataset (L1, CLIP-T)
+- [ ] Eval Original Model for MagicBrush (Edit) train/test dataset (L1, CLIP-T)
 - [ ] Implement DPOTrainer with Emu3-Gen.
 - [ ] Train DPO code with HumanEdit dataset.
 

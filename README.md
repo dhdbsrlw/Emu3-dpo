@@ -48,6 +48,7 @@ We introduce **Emu3**, a new suite of state-of-the-art multimodal models trained
 Clone this repository and install required packages:
 
 ```shell
+conda install pytorch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 pytorch-cuda=12.1 -c pytorch -c nvidia
 git clone https://github.com/baaivision/Emu3
 cd Emu3
 

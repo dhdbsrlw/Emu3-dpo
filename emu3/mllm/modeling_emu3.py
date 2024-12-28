@@ -1255,7 +1255,7 @@ class Emu3ForCausalLM(Emu3PreTrainedModel):
             logits = torch.cat(logits, dim=-1)
         else:
             logits = self.lm_head(hidden_states)
-        logits = logits.float()
+        logits = logits.float() 
 
         loss = None
         if labels is not None:

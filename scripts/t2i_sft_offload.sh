@@ -3,18 +3,20 @@
 # WORLD_SIZE=${WORLD_SIZE:-1}
 RANK=${RANK:-0}
 MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
-MASTER_PORT=${MASTER_PORT:-25000}
+MASTER_PORT=${MASTER_PORT:-26000}
 # set with CUDA_VISIBLE_DEVICES
 # NGPUS=$(python -c "import torch; print(torch.cuda.device_count())")
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 export PYTHONPATH=$(pwd)
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export TORCH_USE_CUDA_DSA=1
 
 # --nproc_per_node=${NGPUS} \
+# /tmp/wandb/run-20241226_092531-lcm16wwj
 
 DATAPATH="/nas2/preference/emu3_tokenized/magicbrush_train/list/train.json"
-EXP_NAME="1226-Emu3-T2I-SFT-MagicBrush"
+EXP_NAME="1226-Emu3-T2I-SFT-MagicBrush-Loss-Fix"
 torchrun \
     --nproc_per_node=4 \
     --nnodes=1 \
@@ -30,7 +32,7 @@ torchrun \
     --apply_loss_on_only_text False \
     --image_area 262144 \
     --max_position_embeddings 5120 \
-    --output_dir "/nas2/checkpoints/emu3_dpo/"${EXP_NAME} \
+    --output_dir "/data/checkpoints/emu3_dpo/"${EXP_NAME} \
     --bf16 True \
     --tf32 True \
     --num_train_epochs 3 \
@@ -38,7 +40,7 @@ torchrun \
     --gradient_accumulation_steps 8 \
     --eval_strategy no \
     --save_strategy steps \
-    --save_steps 200 \
+    --save_steps 100 \
     --save_total_limit 10 \
     --learning_rate 1e-5 \
     --min_learning_rate 1e-6 \
@@ -52,5 +54,5 @@ torchrun \
     --logging_steps 1 \
     --gradient_checkpointing True \
     --dataloader_num_workers 4 \
-    --report_to tensorboard \
+    --report_to wandb \
     --run_name ${EXP_NAME}
