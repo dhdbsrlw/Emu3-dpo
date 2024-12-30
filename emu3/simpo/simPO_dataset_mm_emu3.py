@@ -454,6 +454,16 @@ class SimPODataset_MM(Dataset):
         prompt = example["output_description"] # != output_caption
 
 
+        # print("debug 1")
+        # print(len(rejected_image_prompt))
+        # cnt = 0
+        # for c in rejected_image_prompt:
+        #     if c == "<":
+        #         cnt+=1 
+        # print("# cnt: ", cnt) 
+        
+        # # 각각 다른 image area 가 될 때: 4194, 8194
+
         # make input sequence (ONLY ANSWER PART)
         # # (1) generate `chosen` sequence
         # chosen_input = self.tokenizer.bos_token + prompt + " " + self.instruction + chosen_image_prompt + self.tokenizer.eos_token

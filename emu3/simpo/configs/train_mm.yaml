@@ -6,7 +6,7 @@ result_path: /nas2/checkpoints/emu3_dpo
 algo: simpo
 task: t2i
 exp_name: # (실행 코드 내에서 자동 생성) 1230_HumanEdit_t2i_simpo_gpu_4_bsz_4_grad_accu_2_res_720
-world_size: 4
+world_size: 1
 
 # 고정
 save_dir: 
@@ -29,7 +29,7 @@ lora:
   r: 8
   lora_alpha: 32
   # target_modules: ["q_proj", "v_proj"]
-  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"] 
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj", "lm_head"] 
   lora_dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
@@ -40,10 +40,10 @@ lora:
 # 4__ Tokenizer arguments (중요)
 # Emu3 에서는 max_position_embeddings = (model) max_length
 tokenizer:
-  image_area: 256 # 720(default) / 256
+  image_area: 720 # 720(default) / 256
 
   # max_length: 4096 
-  max_position_embeddings: 4300
+  max_position_embeddings: 8300 # 4300
   max_prompt_length: 256
   max_completion_length: 
   max_target_length: 
@@ -75,14 +75,15 @@ vocab:
 
 
 
-# 6__ Train/Val Data arguments (128)
+# 6__ Train/Val Data arguments 
 dataset:
   preprocessing_num_workers: 4
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
   train:
     data_dir: 
-      - /nas2/preference/emu3_tokenized/human_edit_train_256/list/train.json
+      # - /nas2/preference/emu3_tokenized/human_edit_train_256/list/train.json
+      - /nas2/preference/emu3_tokenized/human_edit_train/list/train.json # 720 ver.
     sampling_rate:
       - 1.0
     # Here sampling rate means different from Iterable dataset.
@@ -91,7 +92,8 @@ dataset:
   # 일단 Validation 무시
   val:
     data_dir: 
-      - /nas2/preference/emu3_tokenized/human_edit_val_256/list/train.json
+      # - /nas2/preference/emu3_tokenized/human_edit_val_256/list/train.json
+      - /nas2/preference/emu3_tokenized/human_edit_val/list/train.json # 720 ver.
     sampling_rate: 
       - 1.0  # start_idx, end_idx 역할 
 
@@ -100,17 +102,17 @@ dataset:
 # 7__ Optimizer/Scheduler arguments
 optimizer:
   type: adamW
-  init_lr: 1.0e-5  #1.0e-6 # 중요 
+  init_lr: 1.0e-4  #1.0e-6 # 중요 
   weight_decay: # 0.05
-  betas: [0.9, 0.999] # [0.9, 0.95]
+  betas: [0.9, 0.95] # [0.9, 0.999] 
   eps: 1.0e-8
 
 
 
 # cosine
 scheduler:
-  lr: 1.0e-5 #1.0e-6
-  min_lr:
+  lr: 1.0e-4 #1.0e-6
+  min_lr: 1.0e-5
   weight_decay:
   warmup_ratio: 0.1 #0.1
 
@@ -130,7 +132,7 @@ simpo:
 # cosine lr_scheduler, tensorboard logger 고정
 experiment:
   seed: 42
-  max_training_step: 10000 # 10000 # optimizer 에 영향 (Warm-up Ratio 계산) 
+  max_training_step: 5000 # 10000 # optimizer 에 영향 (Warm-up Ratio 계산) 
   # ref: https://github.com/fh2c1/Anonymize-Anyone#running_man-train
 
   gradient_accumulation_steps: 8
@@ -139,6 +141,6 @@ experiment:
   gradient_checkpointing_kwargs:
     use_reentrant: False
 
-  val_steps: 50
+  val_steps: 25
   log_steps: 1
   save_steps: 500

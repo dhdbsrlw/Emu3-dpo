@@ -15,6 +15,7 @@ from contextlib import nullcontext
 from typing import Any, Dict, List, Literal, Tuple, Union
 
 import torch
+from torch.autograd import Variable
 import torch.nn as nn  
 from torch.optim import AdamW
 import torch.nn.functional as F
@@ -36,6 +37,9 @@ from utils_emu3 import update_configs, save_config, build_config
 from simPO_dataset_mm_emu3 import SimPODataset_MM 
 from mllm import Emu3Config, Emu3Tokenizer, Emu3ForCausalLM
 
+# for QLoRA
+from transformers import BitsAndBytesConfig
+from peft import prepare_model_for_kbit_training
 
 logger = logging.getLogger(__name__)
 
@@ -192,13 +196,16 @@ class SimPOModel(pl.LightningModule):
         ac = self.config.experiment.gradient_accumulation_steps
         if ac > 1 and batch_idx % ac == 0:
             self.accumulated_loss.clear()
+
         loss = self.compute_loss(inputs=batch) # `return outputs=False`` hard coding
+        
         if ac > 1:
                 self.accumulated_loss.append(loss / ac)
         self.log_dict({'train/loss': (sum(self.accumulated_loss) if ac > 1 else loss),
                        'train/lr': self.trainer.optimizers[0].param_groups[0]['lr'],
                        'train/global_step': self.global_step}, on_step=True, prog_bar=True, logger=True, sync_dist=True)
         return loss # simPO loss
+        # DO not DETACH
 
 
     # def on_train_batch_end(
@@ -210,20 +217,6 @@ class SimPOModel(pl.LightningModule):
     #     logger.info(f"3. chosen_label: {batch['chosen_labels'][0]}\n")  
         
 
-    # def on_validation_start(self):
-    #     # set eval mode
-    #     self.model.eval()
-    #     os.makedirs(f"{self.logger.log_dir}/val/step_{self.global_step}/images", exist_ok=True) # for t2i (CLIP score)
-        
-    #     # move tokenizer to GPU 
-    #     self.tokenizer.to(self.device)
-    #     if self.tokenizer.image_tokenizer.diffusion_model is not None:
-    #         self.tokenizer.image_tokenizer.diffusion_model.to(self.device)
-        
-    #     # read original val data file
-    #     with open(self.config.dataset.val.t2i.gt_txt_dir, 'r') as f:
-    #         self.validation_data = json.load(f)
-    
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
@@ -234,94 +227,9 @@ class SimPOModel(pl.LightningModule):
         self.log('val/loss', loss, prog_bar=True, logger=True, sync_dist=True)
 
         return loss 
-    
-        # # generate image (정성 메트릭)
-        # generation_cfg_t2i = self.config.dataset.val.t2i.generation_cfg
-        # # prompt_batch = f"USER: {batch['prompt_input_ids']} Please generate an image.\nASSISTANT:"
 
-        # with torch.no_grad():
-        #     output_batch = self.model.generate(
-        #                     input_ids=batch['prompt_input_ids'],
-        #                     **generation_cfg_t2i
-        #                     )
-
-        #     outputs = output_batch[:, batch['prompt_input_ids'].shape[1]:]
-            
-        #     for idx, img in enumerate(outputs):
-        #         boi_list = torch.where(img == self.config.vocab.image_token_s)[0]
-        #         eoi_list = torch.where(img == self.config.vocab.image_token_e)[0]
-
-        #         if len(boi_list) == 0 and len(eoi_list) == 0:
-        #             continue
-        #         elif len(boi_list) != 0 and len(eoi_list) != 0:
-        #             boi_idx = boi_list[0]
-        #             eoi_idx = eoi_list[0]
-        #             image_ids = (img[boi_idx+1:eoi_idx] - 32000)
-        #         elif len(boi_list) == 0 and len(eoi_list) != 0:
-        #             eoi_idx = eoi_list[0]
-        #             image_ids = (img[:eoi_idx] - 32000)
-        #         else:
-        #             continue
-                
-        #         # fill zero
-        #         if image_ids.shape[0] < 32:
-        #             image_ids = torch.cat([image_ids, torch.zeros(32 - image_ids.shape[0], dtype=torch.int64).to(image_ids)], dim=0)
-        #         else:
-        #             image_ids = image_ids[:32]
-
-        #         # process tokens in incorrect range
-        #         has_illegal = False
-        #         for token in image_ids:
-        #             if token < 0 or token > 8191:
-        #                 has_illegal = True
-        #                 break
-        #         if has_illegal:
-        #             print(f"=== Error ! This is invalid range of token, {image_ids} ===")
-        #             time.sleep(0.5)
-        #             continue
-                
-        #         # save image
-        #         # file_name = f"{idx:.5d}.jpg"
-        #         file_name = f"{self.validation_data[idx]['chosen']}.jpg"
-        #         try:
-        #             image = self.tokenizer.decode_image(image_ids.reshape(1, -1))
-        #             image[0].save(f"{self.logger.log_dir}/val/step_{self.global_step}/images/{file_name}") # same file name as val gt_img_dir
-        #         except Exception as e:
-        #             print(f"=== Error ! Cannot save image, {file_name} '{e}' ===")
-            
         
         
-
-    # def on_validation_end(self):
-        
-    #     # move tokenizer to CPU 
-    #     self.tokenizer.to('cpu')
-    #     if self.tokenizer.image_tokenizer.diffusion_model is not None:
-    #         self.tokenizer.image_tokenizer.diffusion_model.to('cpu')
-        
-    #     # wait for all GPU finishing work
-    #     self.trainer.strategy.barrier()
-
-    #     if dist.get_rank() == 0:
-    #         print("\n=== Start CLIP score calculation ===")
-    #         # gt_dir and gen_dir has same img_file name 
-    #         gt_image_dir = self.config.dataset.val.t2i.gt_img_dir # TODO: use REAL val dataset, not slice of train data
-    #         generated_image_dir = f'{self.logger.log_dir}/val/step_{self.global_step}/images'
-
-    #         clip_score = calculate_clip_s_for_folder(gt_image_dir, generated_image_dir)  
-    #         num_images = len(glob.glob(os.path.join(generated_image_dir, '*.jpg')))
-
-    #         print(f'=== Number of generated images: {num_images}')
-    #         print(f"=== CLIP score: {clip_score}")
-
-    #         self.logger.experiment.add_scalar(
-    #             'val/num_generated_imgs_for_clip_score', num_images, global_step=self.global_step
-    #         )
-    #         self.logger.experiment.add_scalar(
-    #             'val/clip_score', clip_score, global_step=self.global_step,
-    #         )
-
-
 
     def on_before_optimizer_step(self, optimizer, _):
         # log total grad norm
@@ -556,8 +464,8 @@ class SimPOModel(pl.LightningModule):
             sft_loss = loss_func(policy_chosen_logits.view(-1, policy_chosen_logits.shape[-1]), chosen_labels.view(-1))
             ce_loss = loss
             loss = self.sft_weight * sft_loss + ce_loss
-            self.log_dict({f"{prefix}/sft_loss": sft_loss.detach().cpu(),
-                           f"{prefix}/ce_loss": ce_loss.detach().cpu(),}, prog_bar=True, logger=True, sync_dist=True)
+            self.log_dict({f"{prefix}/sft_loss": sft_loss.cpu(),
+                           f"{prefix}/ce_loss": ce_loss.cpu(),}, prog_bar=True, logger=True, sync_dist=True)
         
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
@@ -590,6 +498,8 @@ class SimPOModel(pl.LightningModule):
         compute_loss_context_manager = torch.cuda.amp.autocast # if self._peft_has_been_casted_to_bf16 else nullcontext
         with compute_loss_context_manager():
             loss = self.get_batch_loss_metrics(inputs, train_eval="train")
+
+        # loss = Variable(loss, requires_grad = True) # no grad_fn error 해결 목적으로 추가
 
         return loss
 
@@ -638,7 +548,8 @@ class SimPOModel(pl.LightningModule):
         total_norm = 0.0
         for p in self.model.parameters():
             if p.grad is not None:
-                param_norm = p.grad.detach().data.norm(2)
+                # param_norm = p.grad.detach().data.norm(2)
+                param_norm = p.grad.data.norm(2)
                 total_norm += param_norm.item() ** 2
         total_norm = total_norm ** (1. / 2)
         return total_norm
@@ -655,7 +566,7 @@ def main():
     config = build_config(cfg_path=args.cfg_path)
 
     today_date = datetime.now().strftime("%m%d") # 1230 (str)
-    config.exp_name = f"{today_date}_{config.algo}_{config.task}_gpu_{config.world_size}_bsz_{config.dataset.per_device_train_batch_size}_grad_accu_{config.experiment.gradient_accumulation_steps}_lora_rank{config.lora.r}_res_{config.tokenizer.image_area}" # use_lora=True 가정
+    config.exp_name = f"{today_date}_{config.algo}_{config.task}_gpu_{config.world_size}_bsz_{config.dataset.per_device_train_batch_size}_grad_accu_{config.experiment.gradient_accumulation_steps}_lora_rank{config.lora.r}_res_{config.tokenizer.image_area}_max_step_{config.experiment.max_training_step}" # use_lora=True 가정
     print(f"\n# Set exp_name as {config.exp_name} !")
     
     config.save_dir = os.path.join(str(config.result_path), str(config.exp_name))
@@ -716,6 +627,7 @@ def main():
         # Set trainable parameters
         # Emu3 는 모델 사이즈가 크기 때문에 특히 설정에 주의해줘야한다; 총 31개 레이어; embed tokens 포함시키면 L40S 에서 학습 불가 (1.5B > 777M)
         # trainable_params_keyword = ['lm_head', 'embed_tokens', 'lora'] # 1.5B
+
         trainable_params_keyword = ['lm_head', 'lora'] # 777M
         # trainable_params_keyword = ['lora'] # 21M
         # trainable_params_keyword = ['lm_head', 'embed_tokens', 'lora', 'input_layernorm', 'post_attention_layernorm', 'norm']
@@ -745,13 +657,6 @@ def main():
             tokenizer.truncation_side = config.tokenizer.truncation_side
         except Exception as e2:
             print (f"Error in setting tokenizer: {e2}")
-
-    # # set reasonable default for models without max length
-    # try:
-    #     if visual_tokenizer.model_max_length > 100_000:
-    #         visual_tokenizer.model_max_length = config.tokenizer.max_length # 2048
-    # except Exception as e3:
-    #     print (f"Error in setting tokenizer: {e3}")
 
     logger.info(f"2 __ Load model and tokenizer done.")  
     
@@ -803,7 +708,9 @@ def main():
         default_root_dir=config.save_dir,
         callbacks=[pl.callbacks.ModelSummary(max_depth=2), checkpoint_callback], # max_depth: layers displayed in summary
         strategy=DDPStrategy(                                                      
-            find_unused_parameters=True # RuntimeError: Expected to have finished reduction in the prior iteration before starting a new one.
+            find_unused_parameters=True # = 원래 SEED LLaMA 는 False 
+            # True 시 학습이 제대로 되지 않는다?
+            # RuntimeError: Expected to have finished reduction in the prior iteration before starting a new one.
         ),            
         log_every_n_steps=config.experiment.log_steps,
         gradient_clip_val=config.experiment.gradient_clip_val, # max_grad_norm
