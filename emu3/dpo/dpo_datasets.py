@@ -19,7 +19,7 @@ class PreferenceHumanEditDatasetEmu3(Dataset):
             raise NotImplementedError(f"Unknown split: {split} !")
 
         self.path_prefix = d["prefix"]
-        self.filelist = d["path_list"] # size adjust 가능
+        self.filelist = d["path_list"][:10] # size adjust 가능
 
         self.tokenizer = tokenizer
         # self.bov = tokenizer.encode(args.visual_token_pattern.format(token_id=0))[0]

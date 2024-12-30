@@ -1,0 +1,144 @@
+# README: Official Emu3-Gen + HumanEdit Dataset
+
+# 1__ Base
+# 변동
+result_path: /nas2/checkpoints/emu3_dpo
+algo: simpo
+task: t2i
+exp_name: # (실행 코드 내에서 자동 생성) 1230_HumanEdit_t2i_simpo_gpu_4_bsz_4_grad_accu_2_res_720
+world_size: 4
+
+# 고정
+save_dir: 
+log_level: INFO
+resume: 
+
+
+# 2__ Model arguments
+model_type: emu3_gen
+model_name_or_path: BAAI/Emu3-Gen
+model_ckpt_path:
+attn_type: fa2
+precision: bf16 
+# "torch_dtype": "float32",
+
+
+# 3__ Lora (PEFT) arguments
+use_lora: True
+lora:
+  r: 8
+  lora_alpha: 32
+  # target_modules: ["q_proj", "v_proj"]
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"] 
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  # modules_to_save: ["embed_tokens", "lm_head", "input_layernorm", "post_attention_layernorm", "norm"] 
+
+
+
+# 4__ Tokenizer arguments (중요)
+# Emu3 에서는 max_position_embeddings = (model) max_length
+tokenizer:
+  image_area: 256 # 720(default) / 256
+
+  # max_length: 4096 
+  max_position_embeddings: 4300
+  max_prompt_length: 256
+  max_completion_length: 
+  max_target_length: 
+
+  truncation_mode: keep_end 
+  truncation_side: left 
+
+  label_pad_token_id: -100  
+
+
+
+
+# 5__ Vocab arguments (중요)
+vocab:
+  pad_token_id: 151643          
+  boi_token_id: 151852
+  bos_token_id: 151849
+  eof_token_id: 151847
+  eoi_token_id: 151853
+  eol_token_id: 151846
+  eos_token_id: 151850
+
+  # "image_area": 518400,
+  # "img_token_id": 151851,
+  # "max_position_embeddings": 9216,
+
+  total_vocab_size: 184622
+  # 40194   # 32000 + 2 + 8192 = 40194
+
+
+
+# 6__ Train/Val Data arguments (128)
+dataset:
+  preprocessing_num_workers: 4
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  train:
+    data_dir: 
+      - /nas2/preference/emu3_tokenized/human_edit_train_256/list/train.json
+    sampling_rate:
+      - 1.0
+    # Here sampling rate means different from Iterable dataset.
+    # btw 0 - 1, like LLaVA
+
+  # 일단 Validation 무시
+  val:
+    data_dir: 
+      - /nas2/preference/emu3_tokenized/human_edit_val_256/list/train.json
+    sampling_rate: 
+      - 1.0  # start_idx, end_idx 역할 
+
+
+
+# 7__ Optimizer/Scheduler arguments
+optimizer:
+  type: adamW
+  init_lr: 1.0e-5  #1.0e-6 # 중요 
+  weight_decay: # 0.05
+  betas: [0.9, 0.999] # [0.9, 0.95]
+  eps: 1.0e-8
+
+
+
+# cosine
+scheduler:
+  lr: 1.0e-5 #1.0e-6
+  min_lr:
+  weight_decay:
+  warmup_ratio: 0.1 #0.1
+
+
+
+# 8__ SimPOTrainer arguments
+simpo:
+  beta: 20 # 2.0  # 중요
+  gamma_beta_ratio: 0.5 # 0.25  # 중요
+  sft_weight: 0
+  label_smoothing: 0 
+  loss_type: sigmoid # Literal["sigmoid", "hinge"]
+  disable_dropout: True # bool
+
+
+# 9__ Experiment arguments
+# cosine lr_scheduler, tensorboard logger 고정
+experiment:
+  seed: 42
+  max_training_step: 10000 # 10000 # optimizer 에 영향 (Warm-up Ratio 계산) 
+  # ref: https://github.com/fh2c1/Anonymize-Anyone#running_man-train
+
+  gradient_accumulation_steps: 8
+  gradient_clip_val: 1.0 # modify (not in official SimPO)
+  gradient_checkpointing: True 
+  gradient_checkpointing_kwargs:
+    use_reentrant: False
+
+  val_steps: 50
+  log_steps: 1
+  save_steps: 500

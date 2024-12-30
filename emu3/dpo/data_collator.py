@@ -50,24 +50,72 @@ class DPODataCollatorEmu3(DPODataCollatorWithPadding):
         
         # (1) generate `chosen` sequence
         # input = self.tokenizer.bos_token + input_image_prompt + prompt + output_image_prompt > EDIT
-        chosen_input = self.tokenizer.bos_token + prompt + " " + self.instruction + chosen_image_prompt
+        chosen_input = self.tokenizer.bos_token + prompt + " " + self.instruction + chosen_image_prompt + self.tokenizer.eos_token
 
         # (2) generate `chosen` sequence
-        rejected_input = self.tokenizer.bos_token + prompt + " " + self.instruction + rejected_image_prompt
+        rejected_input = self.tokenizer.bos_token + prompt + " " + self.instruction + rejected_image_prompt + self.tokenizer.eos_token
 
+        # print("\n\ndebug 6")
+        # print("# self.tokenizer.bos_token: ", len(self.tokenizer.bos_token))
+        # print("# prompt: ", len(prompt))
+        # print("# self.instruction: ", len(self.instruction))
         # print("# chosen_image_prompt: ", len(chosen_image_prompt)) 
+        # print("# chosen_input: ", len(chosen_input)) 
+        # tmp = 0
+        # for c in chosen_image_prompt:
+        #     if c == "<":
+        #         tmp += 1
+        # print("# chosen_image_prompt: ", tmp) # 4164
+                 
+
+        # debug 6
+        # self.tokenizer.bos_token:  13
+        # prompt:  74
+        # self.instruction:  25
+        # chosen_image_prompt:  95101 (< 개수로 카운트했을 때에는 4164)
+        # chosen_input:  95214
+
         # chosen_image_prompt:  95101 - 256
         # chosen_image_prompt:  187531 - 720
 
+        # print()
+        # print(chosen_image_prompt)
+        # print()
+
         # (3) tokenize each sequence
-        # TODO: EOS token ?
+        # TODO: Where is EOS token ?
         chosen_sample = self.tokenizer(
             chosen_input,
             padding="max_length",
-            # max_length=16450, # 추가
             return_token_type_ids=False,
             return_tensors="pt",
         )
+
+        # print("\n# debug 7")
+        # print(chosen_sample['input_ids'])
+        
+        # # Padding index
+        # # padding_idx = 151643
+        # eos_idx = 151850
+        # # tokenizer.pad_token_id
+
+        # # Find the index of the first occurrence
+        # first_occurrence = torch.nonzero(chosen_sample['input_ids'] == eos_idx, as_tuple=True)
+
+        # if first_occurrence[1].numel() > 0:  # Check if eos exists
+        #     first_index = first_occurrence[1][0].item()
+        #     print(f"First occurrence of eos index {eos_idx}: {first_index}")
+        # else:
+        #     print(f"eos index {eos_idx} not found in the tensor.")
+
+        # First occurrence of padding index 151643: 4182 
+        # eos index 151850 not found in the tensor.
+
+        # print(chosen_sample.keys())
+        # print(chosen_sample["input_ids"].shape)
+        # dict_keys(['input_ids', 'attention_mask'])
+        # torch.Size([1, 131072])
+
         # TODO: check chosen sample includes attention_mask
         chosen_labels = chosen_sample["input_ids"]
         # loss mask (only answer;image)
@@ -75,10 +123,10 @@ class DPODataCollatorEmu3(DPODataCollatorWithPadding):
         chosen_sample["labels"] = chosen_labels
 
         # max_position_embeddings 의 값에 따라 최종 input_ids 의 토큰 개수가 결정된다. (디버깅으로 확인)
+        # 151643 = pad_token_id
         rejected_sample = self.tokenizer(
             rejected_input,
             padding="max_length",
-            # max_length=16450, # 추가
             return_token_type_ids=False,
             return_tensors="pt",
         )
@@ -99,7 +147,7 @@ class DPODataCollatorEmu3(DPODataCollatorWithPadding):
         batch["chosen"] = chosen_sample
         batch["rejected"] = rejected_sample
 
-        # print("# batch-chosen: ", len(chosen_sample["input_ids"][0]))  ==max_position_embeddings (in cfg)
+        # print("# batch-chosen: ", len(chosen_sample["input_ids"][0])) ==max_position_embeddings (in cfg)
 
         # print("# in tokenize_batch_element")
         # print(batch["chosen"]["input_ids"].shape) # torch.Size([1, 8210])
@@ -142,7 +190,7 @@ class DPODataCollatorEmu3(DPODataCollatorWithPadding):
 
 
 
-    def pad_or_truncate(self, length, input_ids=None, attention_mask=None, labels=None):
+    def pad_or_truncate(self, length: int, input_ids=None, attention_mask=None, labels=None):
 
         if (input_ids is None) or (attention_mask is None) or (labels is None):
             # raise ValueError("One of the elements in the tokenized is missing !")
@@ -163,7 +211,6 @@ class DPODataCollatorEmu3(DPODataCollatorWithPadding):
         # attention_mask = torch.tensor(attention_mask, dtype=torch.long)
         # labels = torch.tensor(labels, dtype=torch.long)
 
-
         return input_ids, attention_mask, labels
          
 
@@ -179,21 +226,20 @@ class DPODataCollatorEmu3(DPODataCollatorWithPadding):
         rejected_sample = example[0]["rejected"]
 
         # (4) pad / truncate 처리
-        longer_sequence_length = max(len(chosen_sample["input_ids"]), len(rejected_sample["input_ids"]))
-        # print("# Longer Seq: ", longer_sequence_length)
-        # print("# Chosen sample: ", chosen_sample)
-        # print(chosen_sample["input_ids"].shape)
+        # longer_sequence_length = max(chosen_sample["input_ids"].shape[1], rejected_sample["input_ids"].shape[1])
+        # print("# Longer Sequence Length: ", longer_sequence_length) # Longer Sequence Length:  9216 
+        # 둘다 이미지 응답이므로 토큰 길이가 같음.
 
-        chosen_input_ids, chosen_attention_mask, chosen_labels = self.pad_or_truncate(longer_sequence_length, chosen_sample["input_ids"], chosen_sample["attention_mask"], chosen_sample["labels"])
-        rejected_input_ids, rejected_attention_mask, rejected_labels = self.pad_or_truncate(longer_sequence_length, rejected_sample["input_ids"], rejected_sample["attention_mask"], rejected_sample["labels"])
+        # chosen_input_ids, chosen_attention_mask, chosen_labels = self.pad_or_truncate(longer_sequence_length, chosen_sample["input_ids"], chosen_sample["attention_mask"], chosen_sample["labels"])
+        # rejected_input_ids, rejected_attention_mask, rejected_labels = self.pad_or_truncate(longer_sequence_length, rejected_sample["input_ids"], rejected_sample["attention_mask"], rejected_sample["labels"])
 
-        batch["chosen_input_ids"] = chosen_input_ids
-        batch["chosen_attention_mask"] = chosen_attention_mask
-        batch["chosen_labels"] = chosen_labels
+        batch["chosen_input_ids"] = chosen_sample["input_ids"] # chosen_input_ids
+        batch["chosen_attention_mask"] = chosen_sample["attention_mask"] # chosen_attention_mask
+        batch["chosen_labels"] = chosen_sample["labels"]
         
-        batch["rejected_input_ids"] = rejected_input_ids
-        batch["rejected_attention_mask"] = rejected_attention_mask
-        batch["rejected_labels"] = rejected_labels
+        batch["rejected_input_ids"] = rejected_sample["input_ids"] 
+        batch["rejected_attention_mask"] = rejected_sample["attention_mask"] 
+        batch["rejected_labels"] = rejected_sample["labels"] 
 
 
         # print("# in collate")

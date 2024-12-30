@@ -1,0 +1,152 @@
+# README: Official SEED-LLaMA-SFT-8B + DensFusion sampling 1K Dataset
+
+# 159 M     Trainable params
+# 6.8 B     Non-trainable params
+# 7.0 B     Total params
+
+# 1__ Base
+result_path: /nas2/checkpoints/seed_llama_dpo
+exp_name: 1229_HumanEdit_t2i_dpo_gpu_2_bsz_16_grad_accu_2_long_caption
+save_dir: 
+
+world_size: 2
+log_level: INFO
+resume: 
+
+
+# 2__ Model arguments
+model_type: seed_llama # visual_llama
+model_name_or_path: /home/yjoh/project/MAGVLT2/MultiModalLLM/pretrained/seed_llama_8b_sft # agilab2
+
+# model_type: visual_llama
+# model_name_or_path: /home/yjoh/MAGVLT2/MultiModalLLM/pretrained/seed_llama_8b_pretrain
+attn_implementation: flash_attention_2
+precision: bf16 
+
+
+# 3__ Lora (PEFT) arguments
+# same as SEED-SFT
+lora:
+  r: 64
+  lora_alpha: 128
+  target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "down_proj", "up_proj"] 
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  modules_to_save: ["embed_tokens", "lm_head", "input_layernorm", "post_attention_layernorm", "norm"] 
+
+
+
+# 4__ Tokenizer arguments
+tokenizer:
+  max_length: 4096
+  max_prompt_length: 4000
+  max_completion_length: 
+  max_target_length: 
+
+  truncation_mode: keep_end 
+  truncation_side: left 
+
+  label_pad_token_id: -100  
+
+  seed:
+    cfg_path: configs/tokenizer/seed_llama_tokenizer_hf.yaml
+    ckpt_path: None
+    vit_precision: fp16
+    diffusion_precision: fp16
+    load_diffusion: True
+
+
+
+# 5__ Vocab arguments
+vocab:
+  image_token_s: 40192       
+  image_token_e: 40193     
+  image_token_length: 32    # 32 개의 토큰화
+
+  text_token_s: 1           # bos token
+  text_token_e: 2           # eos token
+  text_token_p: 0           # pad token
+
+  image_vocab_size: 8192    
+  text_vocab_size: 32000    # 32000 (original LLaMA)
+  total_vocab_size: 40194   # 32000 + 2 + 8192 = 40194
+
+
+
+# 6__ Train/Val Data arguments (128)
+dataset:
+  preprocessing_num_workers: 4
+  per_device_train_batch_size: 16
+  per_device_eval_batch_size: 4
+  train:
+    data_dir: 
+      - /nas2/preference/seed_tokenized/human_edit_train
+    sampling_rate:
+      - 1.0
+    # Here sampling rate means different from Iterable dataset.
+    # btw 0 - 1, like LLaVA
+
+  # 일단 Validation 무시
+  val:
+    data_dir: 
+      - /nas2/preference/seed_tokenized/human_edit_val
+    sampling_rate: 
+      - 1.0  # start_idx, end_idx 역할 
+
+    # generation config
+    # t2i:
+    #   gt_txt_dir: /nas/backup/data/preference_data/pickapic_v2_val/pickapic_v2_data_all_val.json
+    #   gt_img_dir: /nas/backup/data/preference_data/pickapic_v2_images_validation
+    #   generation_cfg:
+    #     temperature: 0.8 
+    #     num_beams: 5 
+    #     max_new_tokens: 120
+
+
+
+# 7__ Optimizer/Scheduler arguments
+optimizer:
+  type: adamW
+  init_lr: 1.0e-5  #1.0e-6 # 중요 
+  weight_decay: # 0.05
+  betas: [0.9, 0.999] # [0.9, 0.95]
+  eps: 1.0e-8
+
+
+
+# cosine
+scheduler:
+  lr: 1.0e-5 #1.0e-6
+  min_lr:
+  weight_decay:
+  warmup_ratio: 0.1 #0.1
+
+
+
+# 8__ SimPOTrainer arguments
+simpo:
+  beta: 20 # 2.0  # 중요
+  gamma_beta_ratio: 0.5 # 0.25  # 중요
+  sft_weight: 0
+  label_smoothing: 0 
+  loss_type: sigmoid # Literal["sigmoid", "hinge"]
+  disable_dropout: True # bool
+
+
+# 9__ Experiment arguments
+# cosine lr_scheduler, tensorboard logger 고정
+experiment:
+  seed: 42
+  max_training_step: 10000 # 10000 # optimizer 에 영향 (Warm-up Ratio 계산) 
+  # ref: https://github.com/fh2c1/Anonymize-Anyone#running_man-train
+
+  gradient_accumulation_steps: 2 # 16 
+  gradient_clip_val: 1.0 # modify (not in official SimPO)
+  gradient_checkpointing: True 
+  gradient_checkpointing_kwargs:
+    use_reentrant: False
+
+  val_steps: 100
+  log_steps: 1
+  save_steps: 500

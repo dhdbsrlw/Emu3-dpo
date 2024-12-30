@@ -9,7 +9,7 @@ CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} # Default to GPU 0
 
 # export CUDA_VISIBLE_DEVICES=0,1 # num_gpus
 export PYTHONPATH=$(pwd)
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True # 필수
+# export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True # 필수
 export TORCH_USE_CUDA_DSA=1
 
 # --nproc_per_node=${NGPUS} \
@@ -24,7 +24,7 @@ export TORCH_USE_CUDA_DSA=1
 
 TRAIN_DATAPATH="/nas2/preference/emu3_tokenized/human_edit_train_256/list/train.json"
 VAL_DATAPATH="/nas2/preference/emu3_tokenized/human_edit_val_256/list/train.json"
-EXP_NAME="1228-Emu3-T2I-DPO-HumanEdit-256"
+EXP_NAME="1229_Emu3_T2I_DPO_HumanEdit_256_debug"
 
 torchrun \
     --nproc_per_node=${WORLD_SIZE} \
@@ -41,18 +41,18 @@ torchrun \
     --apply_loss_on_only_vision True \
     --apply_loss_on_only_text False \
     --image_area 65536 \
-    --max_position_embeddings 5120 \
+    --max_position_embeddings 4200 \
     --output_dir "/home/yjoh/project/Emu3-dpo/emu3/dpo/results/"${EXP_NAME} \
     --bf16 True \
     --tf32 True \
-    --num_train_epochs 3 \
+    --num_train_epochs 1 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 4 \
     --eval_strategy steps \
     --save_strategy steps \
     --eval_steps 100 \
     --save_steps 100 \
-    --save_total_limit 10 \
+    --save_total_limit 5 \
     --learning_rate 1e-5 \
     --min_learning_rate 1e-6 \
     --weight_decay 0.1 \

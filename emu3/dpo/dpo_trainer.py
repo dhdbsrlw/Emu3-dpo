@@ -147,7 +147,7 @@ class DPOTrainerEmu3(DPOTrainer):
         logits = pi_logratios - ref_logratios  # response preference
 
         # General DPO Loss
-        loss= -torch.nn.functional.logsigmoid(self.beta * logits)
+        loss = -torch.nn.functional.logsigmoid(self.beta * logits)
 
         chosen_rewards = (
             self.beta * (policy_chosen_logps - reference_chosen_logps).detach()

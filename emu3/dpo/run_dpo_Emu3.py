@@ -32,7 +32,7 @@ from emu3.dpo.dpo_trainer import DPOTrainerEmu3
 
 # conda activate emu3_dpo
 # cd /home/yjoh/project/Emu3-dpo
-# WORLD_SIZE=2 CUDA_VISIBLE_DEVICES=0,1,2,3 ./emu3/dpo/scripts/t2i_dpo_offload.sh
+# WORLD_SIZE=1 CUDA_VISIBLE_DEVICES=7 ./emu3/dpo/scripts/t2i_dpo_offload.sh
 # chmod +x ./emu3/dpo/scripts/t2i_dpo_offload.sh
 
 # TODO: LoRA arguments
@@ -176,6 +176,8 @@ def train():
     # for name, param in model.named_parameters():
     #     if param.requires_grad:
     #         print(f"Trainable parameter: {name}")
+
+
     if training_args.use_lora:
         lora_config = LoraConfig(
         r=8,  # Rank of the LoRA matrix
@@ -187,7 +189,6 @@ def train():
 
         if training_args.gradient_checkpointing:
             model.enable_input_require_grads()
-
 
 
     tokenizer = Emu3Tokenizer.from_pretrained(
