@@ -24,7 +24,8 @@ precision: bf16
 
 
 # 3__ Lora (PEFT) arguments
-use_lora: True
+use_qlora: True
+use_lora: False # only
 lora:
   r: 8
   lora_alpha: 32
@@ -43,7 +44,7 @@ tokenizer:
   image_area: 720 # 720(default) / 256
 
   # max_length: 4096 
-  max_position_embeddings: 8300 # 4300
+  max_position_embeddings: 8200 # 8300 # 4300 (마지노선 8200)
   max_prompt_length: 256
   max_completion_length: 
   max_target_length: 
@@ -141,6 +142,6 @@ experiment:
   gradient_checkpointing_kwargs:
     use_reentrant: False
 
-  val_steps: 25
+  val_steps: 250
   log_steps: 1
   save_steps: 500

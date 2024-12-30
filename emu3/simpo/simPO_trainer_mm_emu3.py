@@ -43,6 +43,9 @@ from peft import prepare_model_for_kbit_training
 
 logger = logging.getLogger(__name__)
 
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:<32000>"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:<50000>"
 
 class SimPODataModule(pl.LightningDataModule):
     def __init__(self, config, tokenizer):
@@ -121,7 +124,9 @@ class SimPOModel(pl.LightningModule):
         self.device_type = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
 
         # for Emu3
-        self.use_lora = self.config.get('use_lora', True)
+        self.use_lora = self.config.get('use_lora', False)
+        self.use_qlora = self.config.get('use_qlora', True)
+        assert (not self.use_lora and self.use_qlora) or (self.use_lora and not self.use_qlora), "LoRA and QLoRA cannot be adapted simuultaneously."
 
         # default SimPO hyperparameter 
         simpo_config = self.config['simpo']
@@ -208,13 +213,13 @@ class SimPOModel(pl.LightningModule):
         # DO not DETACH
 
 
-    # def on_train_batch_end(
-    #     self, outputs, batch, batch_idx
-    # ):
-    #     logger.info(f"\n\n*** {batch_idx}th batch example ***")  
-    #     logger.info(f"1. prompt: {batch['prompt_input_ids'][0]}")
-    #     logger.info(f"2. chosen_input: {batch['chosen_input_ids'][0]}")  
-    #     logger.info(f"3. chosen_label: {batch['chosen_labels'][0]}\n")  
+    def on_train_batch_end(
+        self, outputs, batch, batch_idx
+    ):
+        logger.info(f"\n\n*** {batch_idx}th batch example ***")  
+        logger.info(f"1. prompt: {batch['prompt_input_ids'][0]}")
+        logger.info(f"2. chosen_input: {batch['chosen_input_ids'][0]}")  
+        logger.info(f"3. chosen_label: {batch['chosen_labels'][0]}\n")  
         
 
 
@@ -425,6 +430,20 @@ class SimPOModel(pl.LightningModule):
         # dummy token; we'll ignore the losses on these tokens later
         labels[labels == self.label_pad_token_id] = 0
 
+        # 변경 (효과 미미)
+        # def chunked_log_softmax(logits, chunk_size=128):
+        #     chunks = torch.split(logits, chunk_size, dim=-1)
+        #     return torch.cat([torch.nn.functional.log_softmax(chunk, dim=-1) for chunk in chunks], dim=-1)
+
+        # 추가
+        # log_probs = chunked_log_softmax(logits, chunk_size=128)  # Adjust chunk size based on GPU memory
+        # per_token_logps = torch.gather(log_probs, dim=2, index=labels.unsqueeze(2)).squeeze(2)
+
+        # 추가
+        logits = logits.to(torch.float16)  # Downcast logits to FP16 before log_softmax
+
+        # 기존
+        # Gathering operation allocates intermediate tensors proportional to the size of your logits tensor (batch size × sequence length × vocabulary size).
         per_token_logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
 
         if average_log_prob:
@@ -566,7 +585,17 @@ def main():
     config = build_config(cfg_path=args.cfg_path)
 
     today_date = datetime.now().strftime("%m%d") # 1230 (str)
-    config.exp_name = f"{today_date}_{config.algo}_{config.task}_gpu_{config.world_size}_bsz_{config.dataset.per_device_train_batch_size}_grad_accu_{config.experiment.gradient_accumulation_steps}_lora_rank{config.lora.r}_res_{config.tokenizer.image_area}_max_step_{config.experiment.max_training_step}" # use_lora=True 가정
+    if config.use_lora:
+        config.exp_name = f"{today_date}_{config.algo}_{config.task}_gpu_{config.world_size}_bsz_{config.dataset.per_device_train_batch_size}_grad_accu_{config.experiment.gradient_accumulation_steps}_lora_rank_{config.lora.r}_res_{config.tokenizer.image_area}_max_step_{config.experiment.max_training_step}" # use_lora=True 가정
+    
+    # TODO: 미완
+    elif config.use_qlora:
+        config.exp_name = f"{today_date}_{config.algo}_{config.task}_gpu_{config.world_size}_bsz_{config.dataset.per_device_train_batch_size}_grad_accu_{config.experiment.gradient_accumulation_steps}_qlora_rank_{config.lora.r}_res_{config.tokenizer.image_area}_max_step_{config.experiment.max_training_step}"     
+    
+    else: # fft (full-finetuning)
+        config.exp_name = f"{today_date}_{config.algo}_{config.task}_gpu_{config.world_size}_bsz_{config.dataset.per_device_train_batch_size}_grad_accu_{config.experiment.gradient_accumulation_steps}_fft_res_{config.tokenizer.image_area}_max_step_{config.experiment.max_training_step}" 
+    
+
     print(f"\n# Set exp_name as {config.exp_name} !")
     
     config.save_dir = os.path.join(str(config.result_path), str(config.exp_name))
@@ -598,42 +627,85 @@ def main():
     # if training_args.min_learning_rate is not None:
     #     training_args.lr_scheduler_kwargs["min_lr"] = training_args.min_learning_rate
 
+    # TODO: 일단 use_qlora 와 use_lora 를 임의로 배타적으로 설정
+    if config.use_qlora:
+        # Configure quantization with 4-bit settings
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,  # Enable 4-bit quantization
+            bnb_4bit_quant_type="nf4",  # NormalFloat4 (preferred for LLMs)
+            bnb_4bit_compute_dtype=torch.float16 if device == "cuda" else torch.bfloat16,
+            bnb_4bit_enable_offload=True,  # Offload to CPU
+        )
 
-    model = Emu3ForCausalLM.from_pretrained(
+        # Load the base model with 4-bit quantization
+        model = Emu3ForCausalLM.from_pretrained(
+            config.model_name_or_path,
+            config=model_config,
+            # load_in_4bit=True, # 주석 필수
+            attn_implementation="flash_attention_2" if config.attn_type == "fa2" else None,
+            device_map="auto",  # Automatically map layers to available devices
+            quantization_config=quantization_config,
+        )
+
+        # Prepare the model for k-bit fine-tuning
+        model = prepare_model_for_kbit_training(model)
+
+        # LoRA configuration for QLoRA
+        lora_config = LoraConfig(
+            r=config.lora.r,
+            lora_alpha=config.lora.lora_alpha,
+            target_modules=config.lora.target_modules,
+            lora_dropout=config.lora.lora_dropout,
+            bias=config.lora.bias,
+            task_type=config.lora.task_type,
+        )
+        peft_model = get_peft_model(model, lora_config)
+        logger.info(f"Loading QLoRA PEFT Model done.")
+
+
+    # LoRA only
+    elif config.use_lora:
+
+        model = Emu3ForCausalLM.from_pretrained(
         config.model_name_or_path,
         config=model_config,
         attn_implementation="flash_attention_2" if config.attn_type == "fa2" else None,
         torch_dtype=torch.bfloat16 if config.precision == "bf16" else None,
-    )
-
-    if config.use_lora:
-        lora_config =LoraConfig(
-        r=config.lora.r,
-        lora_alpha=config.lora.lora_alpha, 
-        target_modules=config.lora.target_modules,
-        lora_dropout=config.lora.lora_dropout,
-        bias=config.lora.bias,
-        task_type=config.lora.task_type,
-        # modules_to_save=config.lora.modules_to_save
         )
+
+        lora_config = LoraConfig(
+            r=config.lora.r,
+            lora_alpha=config.lora.lora_alpha, 
+            target_modules=config.lora.target_modules,
+            lora_dropout=config.lora.lora_dropout,
+            bias=config.lora.bias,
+            task_type=config.lora.task_type,
+            # modules_to_save=config.lora.modules_to_save
+            )
         
         peft_model = get_peft_model(model, lora_config)
         logger.info(f"Loading PEFT Model done.")
+
+        
+
+    else:
+        raise NotImplementedError("Cannot run FFT !")
         
 
     if config.experiment.gradient_checkpointing:
         model.gradient_checkpointing_enable()
 
-        # Set trainable parameters
-        # Emu3 는 모델 사이즈가 크기 때문에 특히 설정에 주의해줘야한다; 총 31개 레이어; embed tokens 포함시키면 L40S 에서 학습 불가 (1.5B > 777M)
-        # trainable_params_keyword = ['lm_head', 'embed_tokens', 'lora'] # 1.5B
+    # Set trainable parameters
+    # Emu3 는 모델 사이즈가 크기 때문에 특히 설정에 주의해줘야한다; 총 31개 레이어; embed tokens 포함시키면 L40S 에서 학습 불가 (1.5B > 777M)
+    # trainable_params_keyword = ['lm_head', 'embed_tokens', 'lora'] # 1.5B
 
-        trainable_params_keyword = ['lm_head', 'lora'] # 777M
-        # trainable_params_keyword = ['lora'] # 21M
-        # trainable_params_keyword = ['lm_head', 'embed_tokens', 'lora', 'input_layernorm', 'post_attention_layernorm', 'norm']
-        for name, pram in model.named_parameters():
-            pram.requires_grad = False if not any([keyword in name for keyword in trainable_params_keyword]) else True
-            print(f"{name}: requires_grad={pram.requires_grad}")
+    trainable_params_keyword = ['lm_head', 'lora'] # 777M
+    # trainable_params_keyword = ['lora'] # 21M
+    # trainable_params_keyword = ['lm_head', 'embed_tokens', 'lora', 'input_layernorm', 'post_attention_layernorm', 'norm']
+    for name, pram in model.named_parameters():
+        pram.requires_grad = False if not any([keyword in name for keyword in trainable_params_keyword]) else True
+        print(f"{name}: requires_grad={pram.requires_grad}")
+        # param.requires_grad = any(keyword in name for keyword in trainable_params_keyword)
 
 
     # load tokenizer
@@ -708,7 +780,9 @@ def main():
         default_root_dir=config.save_dir,
         callbacks=[pl.callbacks.ModelSummary(max_depth=2), checkpoint_callback], # max_depth: layers displayed in summary
         strategy=DDPStrategy(                                                      
-            find_unused_parameters=True # = 원래 SEED LLaMA 는 False 
+            find_unused_parameters=False 
+            # = 원래 SEED LLaMA 는 False 
+            # Emu3 학습 시 (w/ LoRA only) True 
             # True 시 학습이 제대로 되지 않는다?
             # RuntimeError: Expected to have finished reduction in the prior iteration before starting a new one.
         ),            

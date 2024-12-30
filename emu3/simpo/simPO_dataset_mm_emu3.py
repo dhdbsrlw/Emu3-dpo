@@ -470,6 +470,7 @@ class SimPODataset_MM(Dataset):
         # # (2) generate `chosen` sequence
         # rejected_input = self.tokenizer.bos_token + prompt + " " + self.instruction + rejected_image_prompt + self.tokenizer.eos_token
         prompt_messages = self.tokenizer.bos_token + prompt + " " + instruction 
+        # prompt_messages = self.tokenizer.bos_token + prompt # OOM 영끌
 
 
         # TODO: USER/ASSISTANT
